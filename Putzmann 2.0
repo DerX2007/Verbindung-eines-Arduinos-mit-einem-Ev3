@@ -1,0 +1,311 @@
+/* 
+   Ports:
+    13 Pieper
+    12 Joystickbutton
+    11 IR Empfänger
+    10 Bewegungsmelder
+    9  leer
+    8  leer
+    7  leer
+    6  ledlichterketterelays 
+    5 knopfdrehgebe<r
+    4 encoder b
+    3 DHT 11
+    2 encoder a
+    1 Serieller monitor 100 Ohm - GND
+    0 Serieller monitor 100 Ohm - GND
+    A0 X Achse Joystick
+    A1 Y Achse Joystick
+    A2 Photoresistor
+    A3 Wasserstandssensor
+    A4 I2C
+    A5 I2C
+*/
+#include <Wire.h>    //Biblothek für i2c
+#include "IRremote.h"//Biblothek für Irfernbedienung
+#include "LedControl.h"
+#include <dht11.h>
+
+#define DHT11PIN 3                 //Auskommentieren, wenn DHT 11 nicht angeschlossen.
+
+const int ledlichterketterelays = 6;
+const int Bewegung = 10;
+const int JoystickButton = 12;
+const int XAchse = A0;
+const int YAchse = A1;
+const int PinA = 2;
+const int PinB = 4;
+const int receiver = 11;
+const int buzzer = 9; 
+const int buttondreh = 7;
+const int richtwert = 83;
+
+int PositionX = 0;
+int PositionY = 0;
+int Pos, altePos ;
+int wasserstandsrohwert = 0;
+int val, flag = 0, index = 0;
+int value = 0;
+int a = 0;
+
+volatile int Drehgeberval = 100; 
+
+ byte ButtonLesen = 0;
+ byte vor = 0;
+ byte hinten = 0;
+ byte rechts = 0;
+ byte links = 0;
+ byte knopf = 0;
+ byte knopfzwei = 0;
+
+ byte Wasserausgabemoeglich = 0;
+ byte Feuchtigkeit = 0;
+ byte Temperatur = 0;
+ byte IR = 0;
+ byte Bewegungsstatus = 0;
+
+word letztezahldrehgeber = 1;
+
+boolean Agesetzt = false;
+boolean Bgesetzt = false;
+boolean manuelrelay = false;
+boolean manuelgeschw = false;
+boolean dancing = false;
+boolean dancestep = true;
+static boolean Dreht = false;
+
+dht11 DHT11;
+IRrecv irrecv(receiver);
+decode_results results;
+
+
+void setup()
+{
+  
+  Wire.begin(111);
+  Wire.onReceive(receiveData);
+  Wire.onRequest(sendData);
+  pinMode(PinA, INPUT);//input auf pin  
+  pinMode(PinB, INPUT);//input auf pin  für
+  pinMode (buttondreh , INPUT);     //Drehgeberknopf
+  pinMode(buzzer, OUTPUT); // Buzzer
+  pinMode(JoystickButton, INPUT);//input auf Pin  für Joystickknopf
+  pinMode(Bewegung, INPUT);//input auf Pin  für Bewegungsmelder
+  pinMode(ledlichterketterelays,OUTPUT);
+  
+  digitalWrite(PinA, HIGH);  // Drehgeber wiederstand an
+  digitalWrite(PinB, HIGH);  // Drehgeber wiederstand an
+  
+  attachInterrupt(0, EncoderA, CHANGE); // interupt a für Drehgeber
+  attachInterrupt(1, EncoderB, CHANGE); // interupt b für Drehgeber
+  
+  irrecv.enableIRIn();//Ir input
+}
+
+
+
+
+void loop()
+{
+  
+ if (analogRead(A2) >= 500 &&  manuelrelay != true && dancing != true)
+{
+ digitalWrite(ledlichterketterelays,HIGH);
+}
+else
+{
+  if ( manuelrelay != true)
+  {
+ digitalWrite(ledlichterketterelays,LOW);
+  }
+}
+if (dancing == true)
+{
+  if (dancestep == true)
+  {
+     digitalWrite(ledlichterketterelays,LOW);
+     dancestep = false;
+  }
+  else
+  {
+     digitalWrite(ledlichterketterelays,HIGH);
+     dancestep = true;
+  }
+}
+
+#ifdef DHT11PIN
+  int chk = DHT11.read(DHT11PIN);
+  wasserstandsrohwert = analogRead(A3);
+  if ((int)DHT11.humidity <= 60 && wasserstandsrohwert <= 500)
+  {
+    Wasserausgabemoeglich = 1;
+  }
+  else
+  {
+    Wasserausgabemoeglich = 0;
+  }
+  Temperatur = (int)DHT11.temperature;
+  Feuchtigkeit = (int)DHT11.humidity;
+#endif
+
+  PositionX = analogRead(XAchse);
+  PositionY = analogRead(YAchse);
+  ButtonLesen = digitalRead(12);
+  
+    vor = 0;
+    hinten = 0;
+    rechts = 0;
+    links = 0;
+    
+  if (PositionX > 800) vor = 1;//nach vorne
+  if (PositionX < 300) hinten = 1;//nach hinten
+  if (PositionY > 800) links = 1;//nach rechts
+  if (PositionY < 300) rechts = 1;//nach links
+  
+if (digitalRead(Bewegung) == HIGH && manuelgeschw == false)
+  {
+    Drehgeberval = 75;
+  }
+  else
+  {
+    if (manuelgeschw == false )
+    {
+    Drehgeberval = 100;
+    }
+  }
+  
+if (irrecv.decode(&results))//wenn ir empänger was merkt
+  {
+    dekodiereIR();//geh zum interupt
+    irrecv.resume();//und scan weiter
+  }
+ 
+}
+
+void sendData()//i2c interupt wurde aufgerufen
+{
+  a ++ ; 
+  if (a <= 1)
+  {
+    Wire.write(IR);
+    IR = 0;
+  }
+  if (a == 2) Wire.write(Drehgeberval);  
+  if (a == 3)Wire.write(vor);
+  if (a == 4)Wire.write(hinten);
+  if (a == 5)Wire.write(rechts);
+  if (a == 6)Wire.write(links);
+  if (a == 7)Wire.write(digitalRead(12));
+  if (a == 8)Wire.write(digitalRead(Bewegung));
+  if (a == 9)Wire.write(Wasserausgabemoeglich);  
+  if (a == 10) Wire.write(val/10);   
+  if (a == 11) Wire.write(Feuchtigkeit);
+  if (a == 12) Wire.write(Temperatur); 
+  if (a == 13) Wire.write(49);//frei
+  if (a >= 14) {
+   Wire.write(83);
+    a = 0; }
+}
+
+void EncoderA()
+{
+  if ( Dreht ) delay (1);  
+  if ( digitalRead(PinA) != Agesetzt ) { 
+    Agesetzt = !Agesetzt;
+    if ( Agesetzt && !Bgesetzt )
+      Drehgeberval = Drehgeberval +10;
+      if (letztezahldrehgeber != Drehgeberval)
+  {
+    if (Drehgeberval > 100) Drehgeberval = 0 ;
+    if (Drehgeberval < 0) Drehgeberval = 100 ;
+    letztezahldrehgeber = Drehgeberval;
+  }
+ Dreht = false; 
+ manuelgeschw = true;
+  }
+}
+
+void EncoderB() {
+  if ( Dreht ) delay (1);
+  if ( digitalRead(PinB) != Bgesetzt ) {
+    Bgesetzt = !Bgesetzt;
+    if ( Bgesetzt && !Agesetzt )
+       Drehgeberval = Drehgeberval - 10 ;
+if (letztezahldrehgeber != Drehgeberval)
+  {  
+    if (Drehgeberval > 100) Drehgeberval = 0 ;
+    if (Drehgeberval < 0) Drehgeberval = 100 ;
+    letztezahldrehgeber = Drehgeberval;
+  }
+    Dreht = false;
+    manuelgeschw = true;
+  }
+}
+
+void receiveData(int byteCount)
+{
+
+}
+void dekodiereIR()
+{
+  switch (results.value)
+  {
+    case 0xFFA25D: //POWER
+      IR = 1; break;
+    case 0xFFE21D: //FUNC/STOP
+      IR = 2; break;
+    case 0xFF629D: //VOL+
+      Drehgeberval = Drehgeberval+10;
+      if (Drehgeberval > 100) Drehgeberval = 0 ;
+    if (Drehgeberval < 0) Drehgeberval = 100 ;
+    manuelgeschw = true;
+      IR = 0; break;
+    case 0xFF22DD: //FAST BACK
+      IR = 4; break;
+    case 0xFF02FD: //PAUSE
+      IR = 5; break;
+    case 0xFFC23D: //FAST FORWARD
+      IR = 6; break;
+    case 0xFFE01F: //DOWN
+      IR = 7; break;
+    case 0xFFA857: //VOL-
+      Drehgeberval =Drehgeberval-10 ;
+      if (Drehgeberval > 100) Drehgeberval = 0 ;
+    if (Drehgeberval < 0) Drehgeberval = 100 ;
+    manuelgeschw = true;
+      IR = 0; break;
+    case 0xFF906F: //UP
+      IR = 9; break;
+    case 0xFF9867: //EQ
+      IR = 10; break;
+    case 0xFFB04F: //ST/REPT
+      IR = 11; break;
+    case 0xFF6897: //0 Haupt
+      IR = 12; break;
+    case 0xFF30CF: //1 dancemode off
+    dancing = false;
+      IR = 13; break;
+    case 0xFF18E7: //2 dancemode
+    dancing = true;
+      IR = 14; break;
+    case 0xFF7A85: //3 auto geschwindigkeit
+    manuelgeschw = false;
+      IR = 15; break;
+    case 0xFF10EF: //4 auto relay
+    manuelrelay = false;
+      IR = 16; break;
+    case 0xFF38C7: //5 hoch
+      IR = 17; break;
+    case 0xFF5AA5: //6runter
+      IR = 18; break;
+    case 0xFF42BD: //7 wassern
+      IR = 19; break;
+    case 0xFF4AB5: //8
+      IR = 20;  digitalWrite(ledlichterketterelays,HIGH);
+      manuelrelay = true;
+      break;
+    case 0xFF52AD: //9
+      IR = 21; digitalWrite(ledlichterketterelays,LOW); break;
+       manuelrelay = true;
+  }
+}
